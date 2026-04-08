@@ -187,6 +187,27 @@ wss.on('connection', (ws) => {
       });
     }
 
+    // ── NAME UPDATE ────────────────────────────
+    else if (data.type === 'name_update') {
+      const session = sessions[playerCode];
+      if (!session) return;
+
+      // Update stored name
+      if (playerRole === 'host') {
+        session.hostName = data.name;
+      } else {
+        session.guestName = data.name;
+      }
+
+      // Forward to opponent
+      const opponent = playerRole === 'host' ? session.guest : session.host;
+      safeSend(opponent, {
+        type: 'name_update',
+        player: data.player,
+        name: data.name,
+      });
+    }
+
     // ── REMATCH REQUEST ────────────────────────
     else if (data.type === 'rematch') {
       const session = sessions[playerCode];
