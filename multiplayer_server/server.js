@@ -195,18 +195,18 @@ wss.on('connection', (ws) => {
       }
     }
 
-    // server.js — inside your ws.on('message', ...) handler
-    // Find where you handle 'move' and add 'emoji' the same way:
+    // ── EMOJI ────────────────────────────────────────────────
+    else if (data.type === 'emoji') {
+      const session = sessions[playerCode];
+      if (!session) return;
 
-    if (data.type === 'move') {
-      // your existing move broadcast to opponent
-      opponent.send(JSON.stringify(data));
-    }
+      const opponent = playerRole === 'host' ? session.guest : session.host;
 
-    // ADD THIS:
-    if (data.type === 'emoji') {
-      if (opponent && opponent.readyState === WebSocket.OPEN) {
-        opponent.send(JSON.stringify({ type: 'emoji', emoji: data.emoji }));
+      if (opponent) {
+        safeSend(opponent, {
+          type: 'emoji',
+          emoji: data.emoji,
+        });
       }
     }
 
@@ -246,6 +246,18 @@ wss.on('connection', (ws) => {
       }
     }
 
+    // ── REMATCH ACCEPTED ─────────────────────────────────────
+    else if (data.type === 'rematch_accepted') {
+      const session = sessions[playerCode];
+      if (!session) return;
+
+      const opponent = playerRole === 'host' ? session.guest : session.host;
+
+      if (opponent) {
+        safeSend(opponent, { type: 'rematch_accepted' });
+      }
+    }
+
     // ── PING ─────────────────────────────────────────────────
     else if (data.type === 'ping') {
       safeSend(ws, { type: 'pong' });
@@ -272,7 +284,6 @@ wss.on('connection', (ws) => {
     }
 
     // If host leaves before anyone joined, clean up immediately
-    // instead of waiting for the 10-minute timer
     if (playerRole === 'host' && !session.guest) {
       removeSession(playerCode, 'host left before guest joined');
       return;
