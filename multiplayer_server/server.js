@@ -206,6 +206,13 @@ wss.on('connection', (ws) => {
         safeSend(opponent, {
           type: 'emoji',
           emoji: data.emoji,
+          sender: playerRole, // or playerId
+        });
+
+        safeSend(ws, {
+          type: 'emoji',
+          emoji: data.emoji,
+          sender: playerRole,
         });
       }
     }
@@ -231,30 +238,6 @@ wss.on('connection', (ws) => {
           player: data.player,
           name: data.name,
         });
-      }
-    }
-
-    // ── REMATCH ──────────────────────────────────────────────
-    else if (data.type === 'rematch') {
-      const session = sessions[playerCode];
-      if (!session) return;
-
-      const opponent = playerRole === 'host' ? session.guest : session.host;
-
-      if (opponent) {
-        safeSend(opponent, { type: 'rematch' });
-      }
-    }
-
-    // ── REMATCH ACCEPTED ─────────────────────────────────────
-    else if (data.type === 'rematch_accepted') {
-      const session = sessions[playerCode];
-      if (!session) return;
-
-      const opponent = playerRole === 'host' ? session.guest : session.host;
-
-      if (opponent) {
-        safeSend(opponent, { type: 'rematch_accepted' });
       }
     }
 
