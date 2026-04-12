@@ -200,20 +200,28 @@ wss.on('connection', (ws) => {
       const session = sessions[playerCode];
       if (!session) return;
 
-      const opponent = playerRole === 'host' ? session.guest : session.host;
+      const opponent =
+        playerRole === 'host' ? session.guest : session.host;
 
-      if (opponent) {
+      console.log("Emoji received:", data.emoji);
+      console.log("Opponent exists:", !!opponent);
+
+      // ✅ ALWAYS send back to sender
+      safeSend(ws, {
+        type: 'emoji',
+        emoji: data.emoji,
+        sender: playerRole,
+      });
+
+      // ✅ send to opponent ONLY if connected
+      if (opponent && opponent.readyState === WebSocket.OPEN) {
         safeSend(opponent, {
-          type: 'emoji',
-          emoji: data.emoji,
-          sender: playerRole, // or playerId
-        });
-
-        safeSend(ws, {
           type: 'emoji',
           emoji: data.emoji,
           sender: playerRole,
         });
+      } else {
+        console.log("Opponent not connected yet");
       }
     }
 
