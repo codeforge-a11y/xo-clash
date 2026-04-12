@@ -195,6 +195,21 @@ wss.on('connection', (ws) => {
       }
     }
 
+    // server.js — inside your ws.on('message', ...) handler
+    // Find where you handle 'move' and add 'emoji' the same way:
+
+    if (data.type === 'move') {
+      // your existing move broadcast to opponent
+      opponent.send(JSON.stringify(data));
+    }
+
+    // ADD THIS:
+    if (data.type === 'emoji') {
+      if (opponent && opponent.readyState === WebSocket.OPEN) {
+        opponent.send(JSON.stringify({ type: 'emoji', emoji: data.emoji }));
+      }
+    }
+
     // ── NAME UPDATE ──────────────────────────────────────────
     else if (data.type === 'name_update') {
       const session = sessions[playerCode];
