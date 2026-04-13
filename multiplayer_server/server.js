@@ -200,28 +200,13 @@ wss.on('connection', (ws) => {
       const session = sessions[playerCode];
       if (!session) return;
 
-      const opponent =
-        playerRole === 'host' ? session.guest : session.host;
+      const opponent = playerRole === 'host' ? session.guest : session.host;
 
-      console.log("Emoji received:", data.emoji);
-      console.log("Opponent exists:", !!opponent);
-
-      // ✅ ALWAYS send back to sender
-      safeSend(ws, {
-        type: 'emoji',
-        emoji: data.emoji,
-        sender: playerRole,
-      });
-
-      // ✅ send to opponent ONLY if connected
-      if (opponent && opponent.readyState === WebSocket.OPEN) {
+      if (opponent) {
         safeSend(opponent, {
           type: 'emoji',
           emoji: data.emoji,
-          sender: playerRole,
         });
-      } else {
-        console.log("Opponent not connected yet");
       }
     }
 
@@ -246,6 +231,30 @@ wss.on('connection', (ws) => {
           player: data.player,
           name: data.name,
         });
+      }
+    }
+
+    // ── REMATCH ──────────────────────────────────────────────
+    else if (data.type === 'rematch') {
+      const session = sessions[playerCode];
+      if (!session) return;
+
+      const opponent = playerRole === 'host' ? session.guest : session.host;
+
+      if (opponent) {
+        safeSend(opponent, { type: 'rematch' });
+      }
+    }
+
+    // ── REMATCH ACCEPTED ─────────────────────────────────────
+    else if (data.type === 'rematch_accepted') {
+      const session = sessions[playerCode];
+      if (!session) return;
+
+      const opponent = playerRole === 'host' ? session.guest : session.host;
+
+      if (opponent) {
+        safeSend(opponent, { type: 'rematch_accepted' });
       }
     }
 
