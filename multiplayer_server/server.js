@@ -200,14 +200,17 @@ wss.on('connection', (ws) => {
       const session = sessions[playerCode];
       if (!session) return;
 
-      const opponent = playerRole === 'host' ? session.guest : session.host;
+      const players = [session.host, session.guest];
 
-      if (opponent) {
-        safeSend(opponent, {
-          type: 'emoji',
-          emoji: data.emoji,
-        });
-      }
+      players.forEach(player => {
+        if (player) {
+          safeSend(player, {
+            type: 'emoji',
+            emoji: data.emoji,
+            sender: playerRole, // IMPORTANT
+          });
+        }
+      });
     }
 
     // ── NAME UPDATE ──────────────────────────────────────────
