@@ -2,7 +2,7 @@ const { WebSocketServer } = require('ws');
 const http = require('http');
 
 // ════════════════════════════════════════════════════════════════
-// HTTP SERVER (for Render health check + cold start wake)
+// HTTP SERVER — Render health check + cold start wake
 // ════════════════════════════════════════════════════════════════
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -13,37 +13,25 @@ const server = http.createServer((req, res) => {
   }));
 });
 
-// ════════════════════════════════════════════════════════════════
-// WEBSOCKET SERVER
-// ════════════════════════════════════════════════════════════════
 const wss = new WebSocketServer({ server });
-
-// Active sessions
 const sessions = {};
 
 // ════════════════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════════════════
 
-// Generate unique 6-char code
 function generateCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code;
-  let attempts = 0;
-
+  let code, attempts = 0;
   do {
-    code = '';
-    for (let i = 0; i < 6; i++) {
-      code += chars[Math.floor(Math.random() * chars.length)];
-    }
+    code = Array.from({ length: 6 }, () =>
+      chars[Math.floor(Math.random() * chars.length)]).join('');
     attempts++;
     if (attempts > 100) break;
   } while (sessions[code]);
-
   return code;
 }
 
-// Safe send — only sends if socket is open
 function safeSend(ws, data) {
   if (ws && ws.readyState === 1) {
     try {
@@ -54,7 +42,21 @@ function safeSend(ws, data) {
   }
 }
 
-// Remove session and clear its timer
+function forwardToOpponent(playerCode, playerRole, payload) {
+  const session = sessions[playerCode];
+  if (!session) {
+    console.warn(`[${playerCode}] forwardToOpponent: no session`);
+    return false;
+  }
+  const opponent = playerRole === 'host' ? session.guest : session.host;
+  if (!opponent) {
+    console.warn(`[${playerCode}] forwardToOpponent: opponent not connected`);
+    return false;
+  }
+  safeSend(opponent, payload);
+  return true;
+}
+
 function removeSession(code, reason) {
   if (!sessions[code]) return;
   clearTimeout(sessions[code].timer);
@@ -66,7 +68,7 @@ function removeSession(code, reason) {
 // CONNECTION HANDLER
 // ════════════════════════════════════════════════════════════════
 wss.on('connection', (ws) => {
-  console.log(`[WS] New connection at ${new Date().toISOString()}`);
+  console.log(`[WS] New connection — ${new Date().toISOString()}`);
 
   let playerCode = null;
   let playerRole = null;
@@ -74,14 +76,12 @@ wss.on('connection', (ws) => {
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
 
-  // ── MESSAGE ──────────────────────────────────────────────────
   ws.on('message', (raw) => {
     let data;
-
     try {
       data = JSON.parse(raw.toString());
     } catch {
-      console.error('[WS] Invalid JSON:', raw);
+      console.error('[WS] Invalid JSON');
       return;
     }
 
@@ -89,17 +89,13 @@ wss.on('connection', (ws) => {
 
     // ── CREATE ───────────────────────────────────────────────
     if (data.type === 'create') {
-
-      // Clean up any previous session this socket owned
       if (playerCode && sessions[playerCode]) {
         removeSession(playerCode, 'host created new session');
       }
-
       const code = generateCode();
       playerCode = code;
       playerRole = 'host';
 
-      // Auto-expire lobby after 10 minutes if no guest joins
       const timer = setTimeout(() => {
         if (sessions[code] && !sessions[code].guest) {
           safeSend(sessions[code].host, {
@@ -119,7 +115,6 @@ wss.on('connection', (ws) => {
       };
 
       safeSend(ws, { type: 'created', code });
-
       console.log(`[${code}] Created by "${data.playerName}"`);
     }
 
@@ -129,48 +124,27 @@ wss.on('connection', (ws) => {
       const session = sessions[code];
 
       if (!session) {
-        safeSend(ws, {
-          type: 'error',
-          message: `Invalid code! No game found for "${code}".`,
-        });
-        return;
+        return safeSend(ws, { type: 'error', message: `No game for "${code}".` });
       }
-
       if (session.guest) {
-        safeSend(ws, {
-          type: 'error',
-          message: 'Game is already full!',
-        });
-        return;
+        return safeSend(ws, { type: 'error', message: 'Game is already full.' });
       }
-
       if (!session.host || session.host.readyState !== 1) {
-        safeSend(ws, {
-          type: 'error',
-          message: 'Host has disconnected.',
-        });
-        removeSession(code, 'host disconnected before guest joined');
-        return;
+        removeSession(code, 'host gone before guest joined');
+        return safeSend(ws, { type: 'error', message: 'Host disconnected.' });
       }
 
       playerCode = code;
       playerRole = 'guest';
-
       session.guest = ws;
       session.guestName = data.playerName ?? 'Player 2';
-
-      // Stop the lobby expiry timer since guest joined
       clearTimeout(session.timer);
 
-      // Tell guest they joined successfully
       safeSend(ws, {
-        type: 'joined',
-        code,
+        type: 'joined', code,
         hostName: session.hostName,
         guestName: session.guestName,
       });
-
-      // Tell host that guest joined — game can start
       safeSend(session.host, {
         type: 'start',
         hostName: session.hostName,
@@ -182,83 +156,56 @@ wss.on('connection', (ws) => {
 
     // ── MOVE ─────────────────────────────────────────────────
     else if (data.type === 'move') {
-      const session = sessions[playerCode];
-      if (!session) return;
-
-      const opponent = playerRole === 'host' ? session.guest : session.host;
-
-      if (opponent) {
-        safeSend(opponent, {
-          type: 'move',
-          index: data.index,
-        });
-      }
+      forwardToOpponent(playerCode, playerRole, {
+        type: 'move',
+        index: data.index,
+      });
     }
 
-    // ── EMOJI ────────────────────────────────────────────────
+    // ── EMOJI ─────────────────────────────────────────────────
+    // Accepts {type:'emoji', emoji:'😂'}
+    // Also accepts {type:'message', messageType:'emoji', content:'😂'}
+    // Always forwards as {type:'emoji', emoji:'...'} — one schema, no confusion
     else if (data.type === 'emoji') {
-      const session = sessions[playerCode];
-      if (!session) return;
-
-      const players = [session.host, session.guest];
-
-      players.forEach(player => {
-        if (player) {
-          safeSend(player, {
-            type: 'emoji',
-            emoji: data.emoji,
-            sender: playerRole, // IMPORTANT
-          });
-        }
+      const emoji = data.emoji ?? data.content ?? '👏';
+      const ok = forwardToOpponent(playerCode, playerRole, {
+        type: 'emoji',
+        emoji,
       });
+      console.log(`[${playerCode}] emoji="${emoji}" forwarded=${ok}`);
+    }
+
+    // ── UNIFIED MESSAGE (handles messageType routing) ─────────
+    else if (data.type === 'message') {
+      if (data.messageType === 'emoji') {
+        forwardToOpponent(playerCode, playerRole, {
+          type: 'emoji',
+          emoji: data.content ?? '👏',
+        });
+      } else {
+        forwardToOpponent(playerCode, playerRole, {
+          type: 'message',
+          messageType: 'text',
+          content: data.content ?? '',
+          sender: data.sender ?? playerRole,
+        });
+      }
     }
 
     // ── NAME UPDATE ──────────────────────────────────────────
     else if (data.type === 'name_update') {
       const session = sessions[playerCode];
       if (!session) return;
-
-      const opponent = playerRole === 'host' ? session.guest : session.host;
-
-      // Update stored name in session
       if (playerRole === 'host') {
         session.hostName = data.name ?? session.hostName;
       } else {
         session.guestName = data.name ?? session.guestName;
       }
-
-      // Forward to opponent so their UI updates live
-      if (opponent) {
-        safeSend(opponent, {
-          type: 'name_update',
-          player: data.player,
-          name: data.name,
-        });
-      }
-    }
-
-    // ── REMATCH ──────────────────────────────────────────────
-    else if (data.type === 'rematch') {
-      const session = sessions[playerCode];
-      if (!session) return;
-
-      const opponent = playerRole === 'host' ? session.guest : session.host;
-
-      if (opponent) {
-        safeSend(opponent, { type: 'rematch' });
-      }
-    }
-
-    // ── REMATCH ACCEPTED ─────────────────────────────────────
-    else if (data.type === 'rematch_accepted') {
-      const session = sessions[playerCode];
-      if (!session) return;
-
-      const opponent = playerRole === 'host' ? session.guest : session.host;
-
-      if (opponent) {
-        safeSend(opponent, { type: 'rematch_accepted' });
-      }
+      forwardToOpponent(playerCode, playerRole, {
+        type: 'name_update',
+        player: data.player,
+        name: data.name,
+      });
     }
 
     // ── PING ─────────────────────────────────────────────────
@@ -268,62 +215,48 @@ wss.on('connection', (ws) => {
 
     // ── UNKNOWN ──────────────────────────────────────────────
     else {
-      console.warn(`[${playerCode ?? 'NEW'}] Unknown message type: "${data.type}"`);
+      console.warn(`[${playerCode ?? 'NEW'}] Unknown type: "${data.type}"`);
     }
   });
 
   // ── CLOSE ────────────────────────────────────────────────────
   ws.on('close', () => {
-    console.log(`[${playerCode ?? 'UNKNOWN'}] Connection closed`);
-
+    console.log(`[${playerCode ?? 'UNKNOWN'}] Disconnected`);
     if (!playerCode || !sessions[playerCode]) return;
 
     const session = sessions[playerCode];
     const opponent = playerRole === 'host' ? session.guest : session.host;
+    if (opponent) safeSend(opponent, { type: 'opponent_left' });
 
-    // Notify opponent that the other player left
-    if (opponent) {
-      safeSend(opponent, { type: 'opponent_left' });
-    }
-
-    // If host leaves before anyone joined, clean up immediately
     if (playerRole === 'host' && !session.guest) {
       removeSession(playerCode, 'host left before guest joined');
       return;
     }
-
     removeSession(playerCode, 'player disconnected');
   });
 
-  // ── ERROR ────────────────────────────────────────────────────
   ws.on('error', (err) => {
-    console.error(`[${playerCode ?? 'UNKNOWN'}] Socket error: ${err.message}`);
+    console.error(`[${playerCode ?? 'UNKNOWN'}] Error: ${err.message}`);
   });
 });
 
 // ════════════════════════════════════════════════════════════════
-// GLOBAL PING — detect and terminate dead clients every 30s
+// HEARTBEAT — kill dead sockets every 30s
 // ════════════════════════════════════════════════════════════════
 const pingInterval = setInterval(() => {
   wss.clients.forEach((ws) => {
-    if (!ws.isAlive) {
-      console.log('[WS] Terminating dead client');
-      return ws.terminate();
-    }
+    if (!ws.isAlive) return ws.terminate();
     ws.isAlive = false;
     ws.ping();
   });
 }, 30000);
 
-wss.on('close', () => {
-  clearInterval(pingInterval);
-});
+wss.on('close', () => clearInterval(pingInterval));
 
 // ════════════════════════════════════════════════════════════════
-// START SERVER
+// START
 // ════════════════════════════════════════════════════════════════
 const PORT = process.env.PORT || 3000;
-
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[Server] Running on port ${PORT}`);
   console.log(`[Server] Started at ${new Date().toISOString()}`);
